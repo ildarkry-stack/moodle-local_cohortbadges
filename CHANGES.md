@@ -6,6 +6,8 @@
 - Added an inline available-cohorts picker that opens when the search field is focused and shows the first page without a search term.
 - Added incremental search, paginated browsing, same-page addition and removal, inline removal confirmation and live membership refresh.
 - Kept cohort-level permissions, session-key validation, server-side access checks and Moodle core cohort APIs.
+- Preserved access for category-level cohort managers, including hidden cohorts they may edit.
+- Legacy management URLs now redirect safely to the student profile.
 - Retained the existing read-only course synchronisation list and all current settings.
 
 ## 1.1.0-beta.3 - 2026-10-19

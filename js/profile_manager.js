@@ -182,7 +182,7 @@
             holder.dataset.role = 'remove-confirmation';
 
             const prompt = document.createElement('span');
-            prompt.textContent = root.dataset.confirmremove.replace('{$a}', trigger.dataset.cohortname);
+            prompt.textContent = root.dataset.confirmremove.replace('{cohort}', trigger.dataset.cohortname);
             const confirm = button(root.dataset.confirm, 'btn btn-danger btn-sm', 'confirm-remove');
             confirm.dataset.cohortid = trigger.dataset.cohortid;
             const cancel = button(root.dataset.cancel, 'btn btn-light btn-sm', 'cancel-remove');
