@@ -69,6 +69,10 @@ jobs:
           DB: pgsql
           MOODLE_BRANCH: ${{ matrix.moodle }}
 
+      - name: JavaScript syntax
+        if: ${{ !cancelled() }}
+        run: node --check plugin/js/profile_manager.js
+
       - name: PHP lint
         if: ${{ !cancelled() }}
         run: moodle-plugin-ci phplint ./plugin

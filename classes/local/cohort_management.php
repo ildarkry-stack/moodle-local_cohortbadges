@@ -174,28 +174,33 @@ final class cohort_management {
         global $DB;
 
         $search = trim($search);
-        if ($search === '' || !$contextids) {
+        if (!$contextids) {
             return ['total' => 0, 'cohorts' => []];
         }
 
         [$insql, $params] = $DB->get_in_or_equal($contextids, SQL_PARAMS_NAMED, 'ctx');
         $params['userid'] = $userid;
-        $like = '%' . $DB->sql_like_escape($search) . '%';
-        $params['searchname'] = $like;
-        $params['searchnumber'] = $like;
-        $matching = '(' .
-            $DB->sql_like('c.name', ':searchname', false) . ' OR ' .
-            $DB->sql_like('c.idnumber', ':searchnumber', false);
-        if (ctype_digit($search)) {
-            $matching .= ' OR c.id = :searchid';
-            $params['searchid'] = (int) $search;
+
+        // An empty search deliberately lists the first page of available cohorts.
+        $matching = '';
+        if ($search !== '') {
+            $like = '%' . $DB->sql_like_escape($search) . '%';
+            $params['searchname'] = $like;
+            $params['searchnumber'] = $like;
+            $matching = ' AND (' .
+                $DB->sql_like('c.name', ':searchname', false) . ' OR ' .
+                $DB->sql_like('c.idnumber', ':searchnumber', false);
+            if (ctype_digit($search)) {
+                $matching .= ' OR c.id = :searchid';
+                $params['searchid'] = (int) $search;
+            }
+            $matching .= ')';
         }
-        $matching .= ')';
 
         $fromsql = " FROM {cohort} c
                     WHERE c.contextid {$insql}
                       AND (c.component IS NULL OR c.component = '')
-                      AND {$matching}
+                      {$matching}
                       AND NOT EXISTS (
                           SELECT 1 FROM {cohort_members} cm
                            WHERE cm.cohortid = c.id AND cm.userid = :userid

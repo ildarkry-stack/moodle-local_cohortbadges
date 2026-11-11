@@ -66,6 +66,10 @@ final class profile_display {
             $content
         );
         $tree->add_node($node);
+        if ($canmanage) {
+            global $PAGE;
+            $PAGE->requires->js(new \moodle_url('/local/cohortbadges/js/profile_manager.js', ['v' => '2026111100']));
+        }
     }
 
     /**
@@ -95,11 +99,29 @@ final class profile_display {
     private static function render_content(array $cohorts, int $userid, bool $canmanage, bool $canview): string {
         $mode = $canmanage ? 'manage' : 'read';
         $usages = self::load_course_usages($cohorts, $canview);
-        $content = self::render_badges($cohorts, $userid, $mode, $usages);
-        if ($canmanage) {
-            $content .= self::render_manage_button($userid);
+        $badges = self::render_badges($cohorts, $userid, $mode, $usages);
+        if (!$canmanage) {
+            return $badges;
         }
-        return $content;
+
+        $content = \html_writer::tag('div', $badges, ['data-role' => 'memberships']);
+        $content .= self::render_inline_manager($userid);
+        return \html_writer::tag('div', $content, [
+            'class' => 'local-cohortbadges-manager',
+            'data-cohortbadges-manager' => '1',
+            'data-userid' => $userid,
+            'data-endpoint' => (new \moodle_url('/local/cohortbadges/ajax.php'))->out(false),
+            'data-sesskey' => sesskey(),
+            'data-confirmremove' => get_string('confirmremoveinline', 'local_cohortbadges'),
+            'data-confirm' => get_string('confirm'),
+            'data-cancel' => get_string('cancel'),
+            'data-add' => get_string('add'),
+            'data-loading' => get_string('loading', 'local_cohortbadges'),
+            'data-noresults' => get_string('noavailablecohorts', 'local_cohortbadges'),
+            'data-added' => get_string('cohortadded', 'local_cohortbadges'),
+            'data-removed' => get_string('cohortremoved', 'local_cohortbadges'),
+            'data-error' => get_string('requestfailed', 'local_cohortbadges'),
+        ]);
     }
 
     /**
@@ -202,13 +224,12 @@ final class profile_display {
         }
 
         if ($context && has_capability('moodle/cohort:assign', $context)) {
-            $removeurl = new \moodle_url('/local/cohortbadges/manage.php', [
-                'userid' => $userid,
-                'cohortid' => (int) $cohort['id'],
-                'action' => 'remove',
-            ]);
-            $badge .= \html_writer::link($removeurl, get_string('remove'), [
+            $badge .= \html_writer::tag('button', get_string('remove'), [
+                'type' => 'button',
                 'class' => 'local-cohortbadges-profile-remove',
+                'data-action' => 'remove',
+                'data-cohortid' => (int) $cohort['id'],
+                'data-cohortname' => $cohort['name'],
                 'aria-label' => get_string('removefromcohort', 'local_cohortbadges', $cohort['name']),
             ]);
         }
@@ -224,19 +245,80 @@ final class profile_display {
     }
 
     /**
-     * Render the link to the cohort search and membership management page.
+     * Render a compact manager that opens inside the user's profile.
      *
      * @param int $userid Profile owner identifier.
      * @return string
      */
-    private static function render_manage_button(int $userid): string {
-        $url = new \moodle_url('/local/cohortbadges/manage.php', ['userid' => $userid]);
-        return \html_writer::div(
-            \html_writer::link($url, get_string('managecohorts', 'local_cohortbadges'), [
-                'class' => 'btn btn-secondary btn-sm',
-            ]),
-            'local-cohortbadges-profile-manage'
-        );
+    private static function render_inline_manager(int $userid): string {
+        $inputid = 'local-cohortbadges-search-' . $userid;
+        $listid = 'local-cohortbadges-list-' . $userid;
+
+        $toggle = \html_writer::tag('button', get_string('addtocohort', 'local_cohortbadges'), [
+            'type' => 'button',
+            'class' => 'btn btn-secondary btn-sm local-cohortbadges-manager-toggle',
+            'data-role' => 'toggle',
+            'aria-expanded' => 'false',
+        ]);
+        $label = \html_writer::tag('label', get_string('searchcohorts', 'local_cohortbadges'), [
+            'for' => $inputid,
+        ]);
+        $search = \html_writer::empty_tag('input', [
+            'type' => 'search',
+            'id' => $inputid,
+            'class' => 'form-control',
+            'autocomplete' => 'off',
+            'placeholder' => get_string('searchplaceholder', 'local_cohortbadges'),
+            'data-role' => 'search',
+            'role' => 'combobox',
+            'aria-autocomplete' => 'list',
+            'aria-controls' => $listid,
+            'aria-expanded' => 'false',
+        ]);
+        $results = \html_writer::tag('div', '', [
+            'id' => $listid,
+            'class' => 'local-cohortbadges-picker-results',
+            'role' => 'listbox',
+            'data-role' => 'results',
+            'hidden' => 'hidden',
+        ]);
+        $more = \html_writer::tag('button', get_string('showmore', 'local_cohortbadges'), [
+            'type' => 'button',
+            'class' => 'btn btn-link btn-sm',
+            'data-role' => 'more',
+            'hidden' => 'hidden',
+        ]);
+        $message = \html_writer::tag('div', '', [
+            'class' => 'local-cohortbadges-feedback',
+            'data-role' => 'feedback',
+            'role' => 'status',
+            'aria-live' => 'polite',
+        ]);
+        $panel = \html_writer::tag('div', $label . $search . $results . $more . $message, [
+            'class' => 'local-cohortbadges-inline-panel',
+            'data-role' => 'panel',
+            'hidden' => 'hidden',
+        ]);
+        return \html_writer::div($toggle . $panel, 'local-cohortbadges-profile-manage');
+    }
+
+    /**
+     * Render refreshed membership badges following an authorised AJAX action.
+     *
+     * @param int $userid Profile owner identifier.
+     * @return string
+     */
+    public static function render_editable_badges(int $userid): string {
+        global $USER;
+
+        if (!self::can_manage()) {
+            throw new \moodle_exception('nopermissions', 'error');
+        }
+        $canview = (int) $USER->id === $userid
+            || has_capability('moodle/cohort:view', \context_system::instance());
+        $cohorts = self::load_memberships($userid, $canview);
+        $usages = self::load_course_usages($cohorts, $canview);
+        return self::render_badges($cohorts, $userid, 'manage', $usages);
     }
 
     /**

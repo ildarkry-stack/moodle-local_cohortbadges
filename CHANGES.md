@@ -1,5 +1,13 @@
 # Change log
 
+## 1.1.0-beta.4 - 2026-11-11
+
+- Moved cohort membership controls directly into the user's standard Moodle profile; no separate management page opens for normal use.
+- Added an inline available-cohorts picker that opens when the search field is focused and shows the first page without a search term.
+- Added incremental search, paginated browsing, same-page addition and removal, inline removal confirmation and live membership refresh.
+- Kept cohort-level permissions, session-key validation, server-side access checks and Moodle core cohort APIs.
+- Retained the existing read-only course synchronisation list and all current settings.
+
 ## 1.1.0-beta.3 - 2026-10-19
 
 - Show a read-only, collapsible list of courses that configure cohort sync for each cohort shown in the user profile.
