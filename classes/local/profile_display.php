@@ -43,14 +43,14 @@ final class profile_display {
             return;
         }
 
-        $canview = self::can_view($viewer, $course);
-        $canmanage = self::can_manage();
+        $canview = membership_manager::can_view_profile_memberships($viewer, $course);
+        $canmanage = cohort_management::can_manage_current_user();
         if (!$canview && !$canmanage) {
             return;
         }
 
         $userid = (int) $user->id;
-        $cohorts = self::load_memberships($userid, $canview);
+        $cohorts = self::load_profile_memberships($userid, $canview, $canmanage);
         if (!$cohorts && !$canmanage) {
             return;
         }
@@ -88,6 +88,46 @@ final class profile_display {
     }
 
     /**
+     * Include authorised, editable cohorts even without site-wide view rights.
+     *
+     * This also makes hidden but manually editable cohorts visible to their managers,
+     * without changing the existing display rule for read-only users.
+     *
+     * @param int $userid Profile user identifier.
+     * @param bool $canview Whether the ordinary cohort labels are visible.
+     * @param bool $canmanage Whether this staff member may manage cohorts.
+     * @return array
+     */
+    private static function load_profile_memberships(int $userid, bool $canview, bool $canmanage): array {
+        $cohorts = self::load_memberships($userid, $canview);
+        if (!$canmanage) {
+            return $cohorts;
+        }
+
+        $editable = cohort_management::editable_memberships(
+            $userid,
+            cohort_management::assignable_contextids()
+        );
+        $existing = array_column($cohorts, null, 'id');
+        foreach ($editable as $cohort) {
+            $cohortid = (int) $cohort->id;
+            if (isset($existing[$cohortid])) {
+                continue;
+            }
+            $context = \context::instance_by_id((int) $cohort->contextid);
+            $name = format_string($cohort->name, true, ['context' => $context]);
+            $cohorts[] = [
+                'id' => $cohortid,
+                'contextid' => (int) $cohort->contextid,
+                'name' => $name,
+                'component' => '',
+                'label' => membership_manager::format_label($name, (string) $cohort->idnumber),
+            ];
+        }
+        return $cohorts;
+    }
+
+    /**
      * Build profile content including optional management and read-only course usage.
      *
      * @param array $cohorts Current visible memberships.
@@ -98,14 +138,14 @@ final class profile_display {
      */
     private static function render_content(array $cohorts, int $userid, bool $canmanage, bool $canview): string {
         $mode = $canmanage ? 'manage' : 'read';
-        $usages = self::load_course_usages($cohorts, $canview);
-        $badges = self::render_badges($cohorts, $userid, $mode, $usages);
+        $usages = self::load_course_usages($cohorts, $canview || $canmanage);
+        $badges = self::render_badges($cohorts, $mode, $usages);
         if (!$canmanage) {
             return $badges;
         }
 
         $content = \html_writer::tag('div', $badges, ['data-role' => 'memberships']);
-        $content .= self::render_inline_manager($userid);
+        $content .= inline_manager::render($userid);
         return \html_writer::tag('div', $content, [
             'class' => 'local-cohortbadges-manager',
             'data-cohortbadges-manager' => '1',
@@ -155,51 +195,17 @@ final class profile_display {
     }
 
     /**
-     * Check profile viewing permissions without exposing other users' memberships.
-     *
-     * @param string $viewer Self or other.
-     * @param \stdClass|null $course Course context when known.
-     * @return bool
-     */
-    private static function can_view(string $viewer, $course): bool {
-        if ($viewer === 'self') {
-            return true;
-        }
-        if ($course && !empty($course->id)) {
-            $context = \context_course::instance((int) $course->id, IGNORE_MISSING);
-            return $context && has_capability('local/cohortbadges:view', $context);
-        }
-        return has_capability('moodle/cohort:view', \context_system::instance());
-    }
-
-    /**
-     * Check the optional management setting and coarse-grained capability.
-     *
-     * The management endpoint separately checks capability in each cohort's context.
-     *
-     * @return bool
-     */
-    private static function can_manage(): bool {
-        if (!cohort_management::enabled()) {
-            return false;
-        }
-        return has_capability('moodle/cohort:assign', \context_system::instance())
-            || \core_course_category::has_capability_on_any('moodle/cohort:assign');
-    }
-
-    /**
      * Render cohort badges, optionally with permitted removal links.
      *
      * @param array $cohorts Existing cohort memberships.
-     * @param int $userid Profile owner identifier.
      * @param string $mode Either read or manage.
      * @param array $usages Visible cohort sync course mappings.
      * @return string
      */
-    private static function render_badges(array $cohorts, int $userid, string $mode, array $usages): string {
+    private static function render_badges(array $cohorts, string $mode, array $usages): string {
         $labels = [];
         foreach ($cohorts as $cohort) {
-            $labels[] = self::render_badge($cohort, $userid, $mode, $usages);
+            $labels[] = self::render_badge($cohort, $mode, $usages);
         }
         return \html_writer::div(implode(' ', $labels), 'local-cohortbadges-profile-list');
     }
@@ -208,12 +214,11 @@ final class profile_display {
      * Render an individual cohort badge and its optional removal action.
      *
      * @param array $cohort Cohort membership record.
-     * @param int $userid Profile owner identifier.
      * @param string $mode Either read or manage.
      * @param array $usages Visible cohort sync course mappings.
      * @return string
      */
-    private static function render_badge(array $cohort, int $userid, string $mode, array $usages): string {
+    private static function render_badge(array $cohort, string $mode, array $usages): string {
         $badge = \html_writer::span(
             s($cohort['label']),
             'badge rounded-pill text-bg-secondary local-cohortbadges-profile-badge'
@@ -245,64 +250,6 @@ final class profile_display {
     }
 
     /**
-     * Render a compact manager that opens inside the user's profile.
-     *
-     * @param int $userid Profile owner identifier.
-     * @return string
-     */
-    private static function render_inline_manager(int $userid): string {
-        $inputid = 'local-cohortbadges-search-' . $userid;
-        $listid = 'local-cohortbadges-list-' . $userid;
-
-        $toggle = \html_writer::tag('button', get_string('addtocohort', 'local_cohortbadges'), [
-            'type' => 'button',
-            'class' => 'btn btn-secondary btn-sm local-cohortbadges-manager-toggle',
-            'data-role' => 'toggle',
-            'aria-expanded' => 'false',
-        ]);
-        $label = \html_writer::tag('label', get_string('searchcohorts', 'local_cohortbadges'), [
-            'for' => $inputid,
-        ]);
-        $search = \html_writer::empty_tag('input', [
-            'type' => 'search',
-            'id' => $inputid,
-            'class' => 'form-control',
-            'autocomplete' => 'off',
-            'placeholder' => get_string('searchplaceholder', 'local_cohortbadges'),
-            'data-role' => 'search',
-            'role' => 'combobox',
-            'aria-autocomplete' => 'list',
-            'aria-controls' => $listid,
-            'aria-expanded' => 'false',
-        ]);
-        $results = \html_writer::tag('div', '', [
-            'id' => $listid,
-            'class' => 'local-cohortbadges-picker-results',
-            'role' => 'listbox',
-            'data-role' => 'results',
-            'hidden' => 'hidden',
-        ]);
-        $more = \html_writer::tag('button', get_string('showmore', 'local_cohortbadges'), [
-            'type' => 'button',
-            'class' => 'btn btn-link btn-sm',
-            'data-role' => 'more',
-            'hidden' => 'hidden',
-        ]);
-        $message = \html_writer::tag('div', '', [
-            'class' => 'local-cohortbadges-feedback',
-            'data-role' => 'feedback',
-            'role' => 'status',
-            'aria-live' => 'polite',
-        ]);
-        $panel = \html_writer::tag('div', $label . $search . $results . $more . $message, [
-            'class' => 'local-cohortbadges-inline-panel',
-            'data-role' => 'panel',
-            'hidden' => 'hidden',
-        ]);
-        return \html_writer::div($toggle . $panel, 'local-cohortbadges-profile-manage');
-    }
-
-    /**
      * Render refreshed membership badges following an authorised AJAX action.
      *
      * @param int $userid Profile owner identifier.
@@ -311,14 +258,14 @@ final class profile_display {
     public static function render_editable_badges(int $userid): string {
         global $USER;
 
-        if (!self::can_manage()) {
+        if (!cohort_management::can_manage_current_user()) {
             throw new \moodle_exception('nopermissions', 'error');
         }
         $canview = (int) $USER->id === $userid
-            || has_capability('moodle/cohort:view', \context_system::instance());
-        $cohorts = self::load_memberships($userid, $canview);
-        $usages = self::load_course_usages($cohorts, $canview);
-        return self::render_badges($cohorts, $userid, 'manage', $usages);
+            || membership_manager::can_view_profile_memberships('other', null);
+        $cohorts = self::load_profile_memberships($userid, $canview, true);
+        $usages = self::load_course_usages($cohorts, true);
+        return self::render_badges($cohorts, 'manage', $usages);
     }
 
     /**

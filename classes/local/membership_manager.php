@@ -74,6 +74,24 @@ final class membership_manager {
     }
 
     /**
+     * Check profile viewing permissions without exposing other users' memberships.
+     *
+     * @param string $viewer Self or other.
+     * @param \stdClass|null $course Course context when known.
+     * @return bool
+     */
+    public static function can_view_profile_memberships(string $viewer, $course): bool {
+        if ($viewer === 'self') {
+            return true;
+        }
+        if ($course && !empty($course->id)) {
+            $context = \context_course::instance((int) $course->id, IGNORE_MISSING);
+            return $context && has_capability('local/cohortbadges:view', $context);
+        }
+        return has_capability('moodle/cohort:view', \context_system::instance());
+    }
+
+    /**
      * Format a cohort label according to plugin settings.
      *
      * @param string $name Cohort name.
