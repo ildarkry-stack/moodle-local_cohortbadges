@@ -36,6 +36,18 @@ final class cohort_management {
     }
 
     /**
+     * Whether this staff member may manage at least one site or category cohort.
+     *
+     * @return bool
+     */
+    public static function can_manage_current_user(): bool {
+        return self::enabled() && (
+            has_capability('moodle/cohort:assign', \context_system::instance())
+            || \core_course_category::has_capability_on_any('moodle/cohort:assign')
+        );
+    }
+
+    /**
      * Find contexts containing manually managed cohorts the current user can assign.
      *
      * @return int[]
@@ -43,14 +55,7 @@ final class cohort_management {
     public static function assignable_contextids(): array {
         global $DB;
 
-        if (!self::enabled()) {
-            return [];
-        }
-
-        if (
-            !has_capability('moodle/cohort:assign', \context_system::instance())
-            && !\core_course_category::has_capability_on_any('moodle/cohort:assign')
-        ) {
+        if (!self::can_manage_current_user()) {
             return [];
         }
 
