@@ -164,4 +164,57 @@ final class cohort_management_test extends \advanced_testcase {
         $this->assertTrue(cohort_management::change_membership($target->id, $cohortid, 'add'));
         $this->assertTrue(cohort_is_member($cohortid, $target->id));
     }
+
+    /**
+     * Available cohorts are listed on an empty search, excluding existing memberships.
+     *
+     * @return void
+     */
+    public function test_empty_search_lists_assignable_cohorts(): void {
+        global $CFG;
+
+        $this->resetAfterTest();
+        $this->setAdminUser();
+        set_config('allowmanagement', 1, 'local_cohortbadges');
+        require_once($CFG->dirroot . '/cohort/lib.php');
+
+        $userid = $this->getDataGenerator()->create_user()->id;
+        $contextid = \context_system::instance()->id;
+        $first = cohort_add_cohort((object) ['name' => 'First cohort', 'contextid' => $contextid]);
+        $second = cohort_add_cohort((object) ['name' => 'Second cohort', 'contextid' => $contextid]);
+        cohort_add_member($first, $userid);
+
+        $listed = cohort_management::search_available($userid, [$contextid], '');
+        $this->assertSame(1, $listed['total']);
+        $this->assertArrayHasKey($second, $listed['cohorts']);
+        $this->assertArrayNotHasKey($first, $listed['cohorts']);
+    }
+
+    /**
+     * Available cohorts can be paged without loading the whole site into the UI.
+     *
+     * @return void
+     */
+    public function test_empty_search_is_paginated(): void {
+        global $CFG;
+
+        $this->resetAfterTest();
+        $this->setAdminUser();
+        set_config('allowmanagement', 1, 'local_cohortbadges');
+        require_once($CFG->dirroot . '/cohort/lib.php');
+
+        $userid = $this->getDataGenerator()->create_user()->id;
+        $contextid = \context_system::instance()->id;
+        for ($i = 0; $i < 27; $i++) {
+            cohort_add_cohort((object) ['name' => 'Browse ' . $i, 'contextid' => $contextid]);
+        }
+
+        $firstpage = cohort_management::search_available($userid, [$contextid], '', 0, 25);
+        $secondpage = cohort_management::search_available($userid, [$contextid], '', 1, 25);
+        $this->assertSame(27, $firstpage['total']);
+        $this->assertCount(25, $firstpage['cohorts']);
+        $this->assertSame(27, $secondpage['total']);
+        $this->assertCount(2, $secondpage['cohorts']);
+        $this->assertSame([], array_intersect(array_keys($firstpage['cohorts']), array_keys($secondpage['cohorts'])));
+    }
 }
